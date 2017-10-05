@@ -1,0 +1,317 @@
+---
+title: 'GIS in R: Hengistbury'
+author: "Duncan Golicher"
+date: "04/10/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE,message = FALSE)
+```
+
+## Introduction
+
+In this worksheet we will calculate all the terrain layers that you produced in Arc GIS previously using R and save them in a folder on the server called gis_data. You can download this whole folder for work in QGIS or Arc.
+
+We will use three data sets.
+
+1. Lidar derived digital surface and digital terrain model rasters at 2m resolution downloaded from this source.
+http://environment.data.gov.uk/ds/survey/index.jsp#/survey?grid=SZ39
+2.  Open Street Map vector layers from here.
+http://download.geofabrik.de/europe/great-britain/england/dorset-latest.osm.pbf
+3. Natural England's polygon layers showing protected areas and other areas of interst from here.
+http://naturalengland-defra.opendata.arcgis.com
+
+
+
+
+These layers are already uploaded into a PostGIS data base for use in the class. Notice that if you do go to the sites linked above you will find that to incorporate the data into an Arc project may be rather time consuming, as data have to be downloaded, extracted from zip files and loaded into Arc. Many of the layers are national in extent so include information that is not relevant when mapping a specific site. So further work is needed to extract parts of the data of specific interest. A spatial data base uses spatial indices to speed up the process of querying large data sets in order to pull out specific features.
+
+### Spatial packages in R
+
+There are a large number of add on packages for R that do various useful things when we work with spatial data. Its worth loading most of them in case they are needed.
+
+```{r}
+library(rpostgis)
+library(RPostgreSQL)
+library(sp)
+library(raster)
+library(rgeos)
+library(rgdal)
+library(RColorBrewer)
+library(leaflet.extras)
+library(mapview)
+```
+
+
+## Polygon for the SSSIs  from Postgis
+
+The code below "connects" to the Postgis data base and pulls in a vector layer stored there.
+
+```{r}
+
+conn <- dbConnect("PostgreSQL", host = "postgis", dbname = "bu" ,
+    user = "msc_student", password = "msc123")
+
+query<-"select * from arne.sssi_units"
+
+query<-"select * from sites_of_special_scientific_interest_england where sssi_name = 'Christchurch Harbour'" ## This would change it all pr
+sssi <- pgGetGeom(conn, query=query)
+plot(sssi,axes=TRUE)
+
+
+```
+
+You can see that the coordinates are latitude and longitude, not British National Grid. We can change this easily unsing the sp_Transform function.
+
+```{r}
+sssi <- spTransform(sssi, CRS("+init=epsg:27700"))
+plot(sssi,axes=TRUE)
+```
+
+
+So we can save this layer as a shapefile for use in our desktop GIS projects.
+
+```{r}
+writeOGR(sssi,"gis_data","sssi","ESRI Shapefile",over=TRUE)
+```
+
+
+If you are working from a shapefile within a folder locally you would read it into R like this.
+
+```{r}
+sssi<-readOGR("gis_data","sssi")
+```
+
+You could try uploading a new shapefile into the gis_data and read it in. If you do, be aware that a shapefile consists of all its components. For instance this is what you just saved into the gis_data folder. `r dir("gis_data",pattern="sssi*") `
+
+I.e. four files, not one.
+
+So that's easy enough. You have read data from the PostGIS server and you have seen the R code to transform between CRS and save and load vecotrs locally in shapefile format. So data can be interchanged between R, ArcGIS and QGIS. 
+
+If you look in the window on the lower right hand side of the R Studio pane you will see an option to export files or complete folders. This can be used to pull down any of the files you make and save on the server in order to incoporate them into a QGIS or Arc project.
+
+## Leaflet maps
+
+
+The mapview package makes very simple, but useful little leaflet maps in just one line of code.
+
+
+```{r}
+mapview(sssi) 
+```
+
+
+This is a very simple leaflet map, but it is zoomable and "slippy".  Note that there are four base layers to choose from.
+
+Leaflet web maps consist of a single or several basemap layers and overlay layers that display spatial layers. Leaflet is actually written in Java, but R provides a simple way of building up maps using the %>% operator. 
+
+Polygons to a leaflet map they must be in a suitable global CRS so we can use the original polygon (mapview adjusts this automatically)
+
+We can start making a bespoke leaflet map ussing the leaflet package directly and add a own control. To do this we give each layer a group name for use by the control. The addTiles line sets up an Open Street Map base map. The addPolygons adds in the Arne layer. The mapview function above does all this automatically for us (i.e it is what's known as a wrapper function). We need to make sure the data are in a latitude and longitude CRS.
+
+```{r}
+
+sssi_latlon <- spTransform(sssi, CRS("+init=epsg:4326"))
+library(leaflet)
+
+arne_map<-leaflet() %>% 
+  addTiles() %>%
+  addPolygons(data=sssi_latlon, group="SSSI") %>%
+  addLayersControl(overlayGroups=c("SSSI"))
+arne_map
+```
+
+We'll see how to keep building on this approach later. The mapview function is very convenient and quick and will work well for visualising the steps as we go through them.
+
+
+## Terrain analysis
+
+Now we'll load some Lidar data from the server. The server at present holds the two meter resolution DSMs and DTMS for areas around Arne and Hengistbury head. The whole analysis could therfore very easily used for Hengistbury just by changing the input.
+
+
+```{r,cache=TRUE}
+dsm<- pgGetRast(conn, "dsm_arne_hh",boundary=sssi)
+dtm<- pgGetRast(conn, "dtm_arne_hh",boundary=sssi)
+
+```
+
+If we want to cut out the lower values we can set them as no data (NA).
+
+```{r}
+dsm[dsm<0.1]<-NA
+dtm[dtm<0.1]<-NA
+```
+
+## Default plot in R
+
+R will plot out our raster layers very easily. We just type plot. However, these are not slippy web maps so we can't zoom in and out.
+
+
+```{r}
+plot(dsm)
+plot(sssi, add=TRUE)
+```
+
+So we can see that the data are nicely lined up, as we would expect because I knew that the Lidar layers were in EPSG 27700 CRS and we used the bounding box of the polygons to clip out the rasters from the larger data set stored on the server. This was nice and easy.
+
+## Mapview
+
+The default colours are not necessarily good for terrain, but making a simple mapview is again just a single line. We'll fix that in a minute.
+
+```{r}
+mapview(dsm) + mapview(dtm)
+```
+
+
+Let's improve on this by changing the colours. We'll also add a control to open the map full screen.
+
+```{r}
+dem<- mapview(dsm,col.regions=terrain.colors(1000),legend=TRUE) 
+dem<-dem + mapview(dtm,col.regions=terrain.colors(1000))
+dem@map<-dem@map %>% addFullscreenControl()
+dem
+```
+
+
+To get an idea of the size of the raster we could have a look at the number of rows and columns.
+
+```{r}
+dsm@ncols
+dsm@nrows
+```
+
+So we have `r dsm@ncols * dsm@nrows` values. About 4 million. This is quite large, but it can be handled by R without any issues. If rasters are very large there can be problems holding all the data in memory and a different approach is needed. The problem of potentially slow raster processing applies to all GIS programs. Don't try to process the entire Lidar data set for Dorset in one go! It can be possible to visualise this size dataset in a GIS using techniques such as pyramiding or using mosaics of tiles on a mapserver, but not all raster operations scale up easily. However in this case there are no problems.
+
+The basic statistical properties of a raster can be summarised quickly in R
+
+```{r}
+summary(dsm)
+```
+
+So we have a minimum level for the surface below sea level (as Arne is on the coast) and a maximum height of just 68.7 meters. The NAs are missing values that occur in this case as the Lidar point cloud didn't cover the water surface.
+
+## Terrain modelling
+
+These layers are actually standard derived products that were built from the original lidar point cloud. This is much more convenient than building your own, which can be done. We have a digital terrain model that should represent the ground surface and a digital surface model that represents the top of vegetation and buildings. There is a lot we can do with these data.
+
+For example we can form contours from the digital terrain model.
+
+```{r}
+contours<-rasterToContour(dtm,nlevels=10)
+plot(dtm)
+plot(contours,add=T)
+```
+
+```{r}
+dem<-dem + mapview(contours)
+dem
+
+```
+
+
+Terrain modelling derives additional layers from these building blocks by running algorithms over them. The algorithms look at the neighbourhood of each pixel in order to work out elements such as the slope and aspect. The raster package in R has a range of functions for this. Let's get the slope and aspect from the digital terrain model. This makes more sense than fiding the slope from the surface model, as this would pick up edges of forest and building as slopes.
+
+```{r}
+slope<-terrain(dtm, opt='slope', unit='degrees')
+aspect<-terrain(dtm, opt='aspect',unit='degrees')
+
+sloper<-terrain(dtm, opt='slope', unit='radians')
+aspectr<-terrain(dtm, opt='aspect',unit='radians')
+hillshade<-hillShade(sloper,aspectr,angle=5)
+
+
+```
+
+
+```{r}
+dem<-dem+mapview(hillshade,col.regions=grey.colors(1000)) + mapview(aspect) + mapview(slope)
+dem
+```
+
+
+## Raster algebra
+
+Carrying out raster operations in R is very simple and inuitive. To obtain the height of vegetation (and maybe some buildings ) we just need to subract the digital terrain model from the digital surface model.
+
+```{r}
+chm<-dsm-dtm
+```
+
+
+```{r}
+plot(chm)
+plot(sssi,add=T)
+```
+
+
+## Raster aggregation
+
+We often need to coarsen the resolution of a raster map and use some statistic calculated from all the pixels within a window. For example, if we are interested in the vegetation height around a study point we would not want to know the precices height at the point as it might just happen to fall into a small gap in a forest canopy. The orginal raster is at 2m resolution, so if we want mean vegetation height at 10m resolution we use factor of 5.
+
+```{r}
+chm10<-aggregate(chm, fact=5, fun=mean, expand=TRUE, na.rm=TRUE)
+
+```
+
+We may want to set all values below a low threshold to NA
+
+```{r}
+chm[chm<0.1]<-NA
+chm10[chm10<0.2]<-NA
+```
+
+
+```{r}
+plot(chm10)
+plot(sssi,add=T)
+```
+
+
+```{r}
+canopy<-mapview(chm,legend=TRUE, col.regions=terrain.colors(100))+mapview(chm10, col.regions=terrain.colors(100))
+
+canopy@map <-canopy@map %>% addFullscreenControl()
+canopy
+```
+
+
+
+## Saving the rasters
+
+We might want to do some further work on the rasters in another desktop GIS program such as Arc or QGIS. They can be saved in conventional GeoTiff format locally.
+
+```{r,eval=TRUE}
+writeRaster(dsm,"gis_data/dsm.tif",format="GTiff", overwrite=TRUE)
+writeRaster(dtm,"gis_data/dtm.tif",format="GTiff", overwrite=TRUE)
+writeRaster(chm,"gis_data/chm.tif",format="GTiff", overwrite=TRUE)
+writeRaster(chm10,"gis_data/chm10.tif",format="GTiff", overwrite=TRUE)
+writeRaster(slope,"gis_data/slope.tif",format="GTiff", overwrite=TRUE)
+writeRaster(aspect,"gis_data/aspect.tif",format="GTiff", overwrite=TRUE)
+```
+
+## Calculating insolation using SAGA
+
+The raster package in R doesn't have a native algorithm for calculating insolaton, but SAGA can be used for this. This involves making some saga format files which are then removed, leaving a TIFF file
+
+```{r,cache=TRUE,message=FALSE,results='hide'}
+writeRaster(dtm,"gis_data/saga_dtm.sgrd",format="SAGA", overwrite=TRUE)
+writeRaster(dsm,"gis_data/saga_dsm.sgrd",format="SAGA", overwrite=TRUE)
+system ("saga_cmd ta_lighting 2 -GRD_DEM gis_data/saga_dtm.sgrd  -DAY '13/10/17' -GRD_DIRECT    gis_data/saga_sol")
+sol<-raster("gis_data/saga_sol.sdat")
+
+sol@crs<-dtm@crs
+writeRaster(sol,"gis_data/sol.tif",format="GTiff", overwrite=TRUE)
+system("rm gis_data/saga*")
+
+```
+
+## Tidying up
+
+So that's it for the moment. You have now built some of the basic terrain layers that you will need later on in the project. You have visualised them using some rather rough and ready web maps and saved them all into a folder called gis_demo. They are also all placed in memory in R. If we save all the R objects as a binary file we can load it up in the next session and continue working with that.
+
+```{r}
+save(list=ls(),file="gis_data/hh1.rob")
+dbDisconnect(conn)
+```
+

@@ -1,0 +1,12 @@
+base
+DBI
+RPostgreSQL
+rpostgis
+sp
+raster
+rgeos
+rgdal
+RColorBrewer
+leaflet
+leaflet.extras
+mapview
