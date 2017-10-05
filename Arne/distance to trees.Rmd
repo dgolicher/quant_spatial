@@ -1,0 +1,84 @@
+---
+title: "Distance to trees"
+author: "Duncan Golicher"
+date: "05/10/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,echo=FALSE,message = FALSE)
+```
+
+
+```{r}
+library(rpostgis)
+library(RPostgreSQL)
+library(sp)
+library(raster)
+library(rgeos)
+library(rgdal)
+library(RColorBrewer)
+library(leaflet.extras)
+library(mapview)
+```
+
+
+```{r}
+conn <- dbConnect("PostgreSQL", host = "postgis", dbname = "bu" ,
+    user = "msc_student", password = "msc123")
+query<-"select * from arne.gps_paths"
+paths<-pgGetGeom(conn, query=query)
+
+query<-"select * from arne.study_area"
+study_area<-pgGetGeom(conn, query=query)
+
+
+```
+
+
+```{r}
+load("gis_data/arne1.rob")
+
+```
+
+
+```{r}
+paths <- spTransform(paths, CRS("+init=epsg:27700"))
+study_area <- spTransform(study_area, CRS("+init=epsg:27700"))
+chm_study<-crop(chm, study_area)
+
+```
+
+
+```{r,cache=TRUE}
+
+chm_study[chm_study<2]<-NA
+chm_study[chm_study>=2]<-1
+chm_vect<-rasterToPolygons(chm_study, dissolve=TRUE)
+
+```
+
+
+```{r}
+rand_points<-spsample(study_area, n=100, type='random')
+chm_vect@proj4string<-rand_points@proj4string
+
+distances<-gDistance (rand_points,chm_vect,byid=TRUE)
+
+
+rand_points<-SpatialPointsDataFrame(rand_points,data.frame(distance=apply(distances,2,min)))
+rand_points$aspect<-extract(aspect,rand_points)
+rand_points$sol<-extract(sol,rand_points)
+rand_points$slope<-extract(slope,rand_points)
+rand_points$twi<-extract(twi,rand_points)
+rand_points$dtm<-extract(dtm,rand_points)
+
+```
+
+```{r}
+mp<-mapview(rand_points,color="red") + mapview(chm_vect)
+mp@map <-mp@map %>% addFullscreenControl()
+mp
+```
+
+

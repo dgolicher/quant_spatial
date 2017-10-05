@@ -290,20 +290,42 @@ writeRaster(slope,"gis_data/slope.tif",format="GTiff", overwrite=TRUE)
 writeRaster(aspect,"gis_data/aspect.tif",format="GTiff", overwrite=TRUE)
 ```
 
-## Calculating insolation using SAGA
+## Calculating insolation and topographic wetness index.using SAGA
 
-The raster package in R doesn't have a native algorithm for calculating insolaton, but SAGA can be used for this. This involves making some saga format files which are then removed, leaving a TIFF file
+The raster package in R doesn't have a native algorithm for calculating insolaton, but SAGA can be used for this. This involves making some saga format files which are then removed, leaving a TIFF file.
+
+We can also calculate a topographic wetness index. These two calculations tgether will take several minutes to run, but the layers may be useful.
 
 ```{r,cache=TRUE,message=FALSE,results='hide'}
 writeRaster(dtm,"gis_data/saga_dtm.sgrd",format="SAGA", overwrite=TRUE)
 writeRaster(dsm,"gis_data/saga_dsm.sgrd",format="SAGA", overwrite=TRUE)
 system ("saga_cmd ta_lighting 2 -GRD_DEM gis_data/saga_dtm.sgrd  -DAY '13/10/17' -GRD_DIRECT    gis_data/saga_sol")
+
+system ("saga_cmd ta_hydrology 15 -DEM gis_data/saga_dtm.sgrd  -TWI   gis_data/saga_TWI")
+
 sol<-raster("gis_data/saga_sol.sdat")
+twi<-raster("gis_data/saga_TWI.sdat")
 
 sol@crs<-dtm@crs
+twi@crs<-dtm@crs
+
 writeRaster(sol,"gis_data/sol.tif",format="GTiff", overwrite=TRUE)
+writeRaster(twi,"gis_data/twi.tif",format="GTiff", overwrite=TRUE)
+
+sol<-raster("gis_data/sol.tif")
+twi<-raster("gis_data/twi.tif")
+
 system("rm gis_data/saga*")
 
+```
+
+```{r}
+plot(twi)
+```
+
+
+```{r}
+dem+mapview(twi)
 ```
 
 ## Tidying up
